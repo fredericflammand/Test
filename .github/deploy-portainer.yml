@@ -1,0 +1,91 @@
+name: PortainerDeployDispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environnement cible"
+        required: true
+        default: "recette"
+        type: choice
+        options:
+          - recette
+          - production
+      version:
+        description: "Version a deployer"
+        required: true
+        default: "latest"
+        type: string
+  workflow_run:
+    workflows:
+      - Build Images Dispatch
+    types:
+      - completed
+
+jobs:
+  deploy-portainer:
+    name: Deploy to Portainer
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: portainer-deploy-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'recette' }}
+      cancel-in-progress: false
+    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'recette' }}
+    steps:
+      - name: Download build metadata (auto mode)
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-metadata
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ./build-metadata
+
+      - name: Resolve deployment parameters
+        id: resolve
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            DEPLOY_ENV="${{ github.event.inputs.environment }}"
+            DEPLOY_VERSION="${{ github.event.inputs.version }}"
+            DEPLOY_MODE="manual"
+          else
+            DEPLOY_ENV="recette"
+            DEPLOY_VERSION="$(cat ./build-metadata/version.txt)"
+            DEPLOY_MODE="automatic"
+          fi
+
+          echo "deploy_env=$DEPLOY_ENV" >> "$GITHUB_OUTPUT"
+          echo "deploy_version=$DEPLOY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "deploy_mode=$DEPLOY_MODE" >> "$GITHUB_OUTPUT"
+
+      - name: Validate deployment rules
+        shell: bash
+        run: |
+          if [ "${{ steps.resolve.outputs.deploy_mode }}" = "automatic" ] && [ "${{ steps.resolve.outputs.deploy_env }}" = "production" ]; then
+            echo "Automatic deployments to production are forbidden."
+            exit 1
+          fi
+
+      - name: Deployment summary
+        shell: bash
+        run: |
+          {
+            echo "## Portainer deployment request"
+            echo "- Mode: ${{ steps.resolve.outputs.deploy_mode }}"
+            echo "- Environment: ${{ steps.resolve.outputs.deploy_env }}"
+            echo "- Version: ${{ steps.resolve.outputs.deploy_version }}"
+            echo "- Actor: ${{ github.actor }}"
+            echo "- Source event: ${{ github.event_name }}"
+            if [ "${{ steps.resolve.outputs.deploy_env }}" = "production" ]; then
+              echo "- Reminder: production window is Monday morning, with AUGUSTIN and MICKAEL communication required."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy (placeholder)
+        shell: bash
+        run: |
+          echo "Deploying version '${{ steps.resolve.outputs.deploy_version }}' to '${{ steps.resolve.outputs.deploy_env }}' (mode: ${{ steps.resolve.outputs.deploy_mode }})."
+          echo "TODO: integrate Portainer API/webhook call once infrastructure arbitration is finalized."
