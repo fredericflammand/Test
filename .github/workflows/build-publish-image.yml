@@ -1,9 +1,6 @@
 name: BuildPublishTestImage
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -28,11 +25,12 @@ jobs:
           set -euo pipefail
 
           IMAGE_REF="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE_NAME}"
-          SHORT_SHA="${GITHUB_SHA::7}"
+          VERSION_TAG="$(date -u +'%Y.%-m.%-d').${GITHUB_RUN_NUMBER}"
 
           echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
           echo "latest_tag=${IMAGE_REF}:latest" >> "$GITHUB_OUTPUT"
-          echo "sha_tag=${IMAGE_REF}:sha-$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "version_tag=${IMAGE_REF}:${VERSION_TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -49,7 +47,7 @@ jobs:
           push: true
           tags: |
             ${{ steps.meta.outputs.latest_tag }}
-            ${{ steps.meta.outputs.sha_tag }}
+            ${{ steps.meta.outputs.version_tag }}
 
       - name: Publish summary
         shell: bash
@@ -59,5 +57,5 @@ jobs:
             echo "- Image: ${{ steps.meta.outputs.image_ref }}"
             echo "- Tags:"
             echo "  - latest"
-            echo "  - sha-${GITHUB_SHA::7}"
+            echo "  - ${{ steps.meta.outputs.version }}"
           } >> "$GITHUB_STEP_SUMMARY"

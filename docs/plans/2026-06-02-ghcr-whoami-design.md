@@ -10,9 +10,9 @@
 **Approach:**
 - Use `FROM traefik/whoami:latest` so browser behavior stays unchanged.
 - Add lightweight metadata (`LABEL`) to prove the image is built from this repository.
-- Publish two tags from GitHub Actions: `latest` and a short-SHA tag.
+- Publish two tags from GitHub Actions: `latest` and a date-based manual version tag.
 
 **Success Criteria:**
 - A workflow run pushes `ghcr.io/<owner>/<image>:latest`.
-- The same workflow pushes `ghcr.io/<owner>/<image>:sha-<shortsha>`.
+- The same workflow pushes `ghcr.io/<owner>/<image>:YYYY.M.D.<run_number>`.
 - The published image still answers like `traefik/whoami` in a browser.

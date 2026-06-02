@@ -4,7 +4,7 @@
 
 **Goal:** Add a minimal custom image based on `traefik/whoami` and publish it to GHCR from GitHub Actions.
 
-**Architecture:** The repository gets a single Dockerfile that extends `traefik/whoami` without changing runtime behavior. A dedicated workflow builds that Dockerfile on pushes to `main` and on manual dispatch, then publishes immutable and rolling tags to GHCR.
+**Architecture:** The repository gets a single Dockerfile that extends `traefik/whoami` without changing runtime behavior. A dedicated manual workflow builds that Dockerfile on demand, then publishes a rolling `latest` tag plus a date-based version tag to GHCR.
 
 **Tech Stack:** Docker, GitHub Actions, GitHub Container Registry
 
@@ -32,13 +32,13 @@ Do not override `ENTRYPOINT` or `CMD`.
 **Files:**
 - Create: `.github/workflows/build-publish-image.yml`
 
-**Step 1: Trigger on `main` and manual dispatch**
+**Step 1: Trigger on manual dispatch**
 
-Add `push` on `main` and `workflow_dispatch`.
+Add `workflow_dispatch` only.
 
 **Step 2: Compute tags**
 
-Publish `latest` and `sha-<shortsha>`.
+Publish `latest` and `YYYY.M.D.<run_number>`.
 
 **Step 3: Login and push**
 

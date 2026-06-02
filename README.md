@@ -7,9 +7,9 @@ This repository builds a custom test image based on `traefik/whoami` and can dep
 - GHCR image: `ghcr.io/<owner>/portainertest-whoami`
 - Published tags:
   - `latest`
-  - `sha-<shortsha>`
+  - `YYYY.M.D.<run_number>`
 
 ## Portainer stack variables
 
 - `APP_IMAGE=ghcr.io/<owner>/portainertest-whoami`
-- `SERVICE_TAG=latest` or `sha-<shortsha>`
+- `SERVICE_TAG=latest` or `YYYY.M.D.<run_number>`
