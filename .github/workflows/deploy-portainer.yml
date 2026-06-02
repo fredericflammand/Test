@@ -1,9 +1,6 @@
 name: DeployPortainerStack
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       service_tag:
