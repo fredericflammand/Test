@@ -49,7 +49,7 @@ jobs:
           set -euo pipefail
           IMAGE_REF="${APP_IMAGE}:${DEPLOY_TAG}"
 
-          if docker manifest inspect "$IMAGE_REF" > /dev/null 2>&1; then
+          if docker pull "$IMAGE_REF" > /dev/null 2>&1; then
             echo "Image found: $IMAGE_REF"
           else
             echo "Image not found: $IMAGE_REF"
