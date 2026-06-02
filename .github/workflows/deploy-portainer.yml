@@ -1,91 +1,129 @@
-name: PortainerDeployDispatch
+name: DeployPortainerStack
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
-      environment:
-        description: "Environnement cible"
+      service_tag:
+        description: Tag image a deployer
         required: true
-        default: "recette"
-        type: choice
-        options:
-          - recette
-          - production
-      version:
-        description: "Version a deployer"
-        required: true
-        default: "latest"
+        default: latest
         type: string
-  workflow_run:
-    workflows:
-      - Build Images Dispatch
-    types:
-      - completed
+
+permissions:
+  contents: read
+  packages: read
 
 jobs:
   deploy-portainer:
-    name: Deploy to Portainer
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
-    runs-on: [self-hosted, deployment]
-    concurrency:
-      group: portainer-deploy-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'recette' }}
-      cancel-in-progress: false
-    environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'recette' }}
+    name: Update Portainer stack
+    runs-on:
+      - self-hosted
+      - linux
+      - docker
+      - deployment
+    env:
+      APP_IMAGE: ${{ vars.GHCR_IMAGE }}
+      PORTAINER_URL: ${{ vars.PORTAINER_URL }}
+      PORTAINER_ENDPOINT_ID: ${{ vars.PORTAINER_ENDPOINT_ID }}
+      PORTAINER_STACK_ID: ${{ vars.PORTAINER_STACK_ID }}
+      PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
+      DEPLOY_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.service_tag || 'latest' }}
     steps:
-      - name: Download build metadata (auto mode)
-        if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
+      - name: Validate configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for value in PORTAINER_URL PORTAINER_ENDPOINT_ID PORTAINER_STACK_ID PORTAINER_API_KEY APP_IMAGE DEPLOY_TAG; do
+            if [ -z "${!value:-}" ]; then
+              echo "Missing required configuration: $value"
+              exit 1
+            fi
+          done
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
         with:
-          name: deployment-metadata
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: ./build-metadata
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve deployment parameters
-        id: resolve
+      - name: Verify image exists
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            DEPLOY_ENV="${{ github.event.inputs.environment }}"
-            DEPLOY_VERSION="${{ github.event.inputs.version }}"
-            DEPLOY_MODE="manual"
+          set -euo pipefail
+          IMAGE_REF="${APP_IMAGE}:${DEPLOY_TAG}"
+
+          if docker manifest inspect "$IMAGE_REF" > /dev/null 2>&1; then
+            echo "Image found: $IMAGE_REF"
           else
-            DEPLOY_ENV="recette"
-            DEPLOY_VERSION="$(cat ./build-metadata/version.txt)"
-            DEPLOY_MODE="automatic"
-          fi
-
-          echo "deploy_env=$DEPLOY_ENV" >> "$GITHUB_OUTPUT"
-          echo "deploy_version=$DEPLOY_VERSION" >> "$GITHUB_OUTPUT"
-          echo "deploy_mode=$DEPLOY_MODE" >> "$GITHUB_OUTPUT"
-
-      - name: Validate deployment rules
-        shell: bash
-        run: |
-          if [ "${{ steps.resolve.outputs.deploy_mode }}" = "automatic" ] && [ "${{ steps.resolve.outputs.deploy_env }}" = "production" ]; then
-            echo "Automatic deployments to production are forbidden."
+            echo "Image not found: $IMAGE_REF"
             exit 1
           fi
+
+      - name: Fetch current stack file
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --fail --show-error --silent \
+            -H "X-API-Key: $PORTAINER_API_KEY" \
+            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID/file" \
+            > stack-file-response.json
+
+      - name: Build Portainer payload
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import os
+
+          response = json.loads(Path("stack-file-response.json").read_text(encoding="utf-8"))
+          stack_file = response["StackFileContent"]
+
+          payload = {
+              "Env": [
+                  {"name": "APP_IMAGE", "value": os.environ["APP_IMAGE"]},
+                  {"name": "SERVICE_TAG", "value": os.environ["DEPLOY_TAG"]},
+              ],
+              "Prune": False,
+              "PullImage": False,
+              "RepullImageAndRedeploy": True,
+              "StackFileContent": stack_file,
+          }
+
+          Path("portainer-update-payload.json").write_text(
+              json.dumps(payload),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Update stack via Portainer API
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl --fail --show-error --silent \
+            -X PUT \
+            -H "X-API-Key: $PORTAINER_API_KEY" \
+            -H "Content-Type: application/json" \
+            "$PORTAINER_URL/api/stacks/$PORTAINER_STACK_ID?endpointId=$PORTAINER_ENDPOINT_ID" \
+            --data-binary @portainer-update-payload.json
 
       - name: Deployment summary
         shell: bash
         run: |
           {
-            echo "## Portainer deployment request"
-            echo "- Mode: ${{ steps.resolve.outputs.deploy_mode }}"
-            echo "- Environment: ${{ steps.resolve.outputs.deploy_env }}"
-            echo "- Version: ${{ steps.resolve.outputs.deploy_version }}"
-            echo "- Actor: ${{ github.actor }}"
-            echo "- Source event: ${{ github.event_name }}"
-            if [ "${{ steps.resolve.outputs.deploy_env }}" = "production" ]; then
-              echo "- Reminder: production window is Monday morning, with AUGUSTIN and MICKAEL communication required."
-            fi
+            echo "## Portainer deployment"
+            echo "- Stack id: $PORTAINER_STACK_ID"
+            echo "- Endpoint id: $PORTAINER_ENDPOINT_ID"
+            echo "- Image: $APP_IMAGE"
+            echo "- Tag deployed: $DEPLOY_TAG"
+            echo "- Triggered from: ${{ github.ref_name }}"
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Deploy (placeholder)
-        shell: bash
-        run: |
-          echo "Deploying version '${{ steps.resolve.outputs.deploy_version }}' to '${{ steps.resolve.outputs.deploy_env }}' (mode: ${{ steps.resolve.outputs.deploy_mode }})."
-          echo "TODO: integrate Portainer API/webhook call once infrastructure arbitration is finalized."
